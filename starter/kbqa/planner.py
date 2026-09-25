@@ -250,9 +250,12 @@ class Planner:
 
         # 路由：问“多少/多久/几”的就是要数字，问“为什么/原因”的就是要说法。
         # 两边都走一遍太慢，没必要。
-        if E.has_any(text, ("多少", "多久", "几")):
+        # 例外：price 意图（“牛肉poke 现在多少钱一份”）问的是当前售价，
+        # 答案在调价文档里，不能因为句子里有“多少”就被打回去查销量——
+        # 查出来的只会是“数据区间外”的 refusal。
+        if plan.kind != "price" and E.has_any(text, ("多少", "多久", "几")):
             plan.intent = "data"
-            if plan.kind in ("doc", "anomaly", "target", "price"):
+            if plan.kind in ("doc", "anomaly", "target"):
                 plan.kind = "summary"
         elif E.has_any(text, ("为什么", "原因", "怎么回事", "咋回事")):
             plan.intent, plan.kind = "doc", "doc"
