@@ -11,6 +11,26 @@ from . import entities as E
 from .followup import FollowUps
 from .timeparse import TimeSpec, parse_time
 
+
+def _safety_refusal(question: str) -> Optional[str]:
+    """写操作与提示词探取：直接拒答，数据库连碰都不碰。
+
+    entities.is_destructive / is_prompt_probe 是现成的判定器，
+    但此前从未被接入规划入口——安全类请求一路走到检索/取数，
+    拿一篇门店档案当答案（S02/S03 的症状）。
+    """
+    if E.is_destructive(question):
+        return (
+            "这是对数据的写操作请求，我不能执行：本系统对数据库只有只读权限，"
+            "任何删除、修改、伪造经营数据的操作都会被拒绝。"
+        )
+    if E.is_prompt_probe(question):
+        return (
+            "我不能透露系统提示词、内部指令或数据库结构，也不会执行这类指令。"
+            "如果你是运营同事，直接问经营数字或公司规定就好。"
+        )
+    return None
+
 #: 意图 -> 检索时补充的领域同义词。纯语言层面的扩写，帮助“卖多少钱”命中“售价/调价”。
 INTENT_KEYWORDS = {
     "price": ("售价", "价格", "调价", "单价"),
@@ -81,6 +101,11 @@ class Planner:
         standalone, inherited = self.followups.resolve(question, history or [])
         plan = Plan(question=question, standalone=standalone, search_query=standalone)
         history = history or []
+        safety = _safety_refusal(question)
+        if safety:
+            plan.intent, plan.kind = "refusal", "safety"
+            plan.refusal = safety
+            return plan
         if not history and E.looks_like_follow_up(question) and len(question.strip()) <= 12:
             plan.intent, plan.kind = "clarify", "need_context"
             plan.refusal = "这句像是追问，但这个会话里没有上文。请把问题补完整，例如“7 月的净营业额是多少”。"
