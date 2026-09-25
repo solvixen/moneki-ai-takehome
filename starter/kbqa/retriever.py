@@ -268,7 +268,6 @@ class Retriever:
             )
         adjusted.sort(key=lambda item: (-item[0], item[1]))
 
-        ordered = [self.index.chunks[position] for _, position in adjusted]
         hits: list[Hit] = []
         taken: set[int] = set()
         per_doc: dict[str, int] = {}
@@ -278,10 +277,11 @@ class Retriever:
                 continue
             per_doc[chunk.doc_id] = per_doc.get(chunk.doc_id, 0) + 1
             taken.add(position)
-            hit = self._hit(position, score, filtered)
-            # 第几条命中就取排序里的第几篇文档。
-            hit.doc_id = ordered[len(hits)].doc_id
-            hits.append(hit)
+            # hit 的 doc_id/meta 全部来自它自己的 chunk——
+            # 曾经这里有一行 hit.doc_id = ordered[len(hits)].doc_id，
+            # 把命中片段的归属改写成排序序列里另一位选手的文档，
+            # 引用（doc_id + quote 逐字核对）随之整体错位。
+            hits.append(self._hit(position, score, filtered))
             if len(hits) >= top_k:
                 break
 
