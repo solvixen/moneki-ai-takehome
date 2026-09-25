@@ -107,3 +107,44 @@ def test_followup_on_price_inherits_product(tmp_path):
     second = svc.chat("C", "那 6 月 18 号那天呢？")
     assert second["answer_type"] in ("doc", "hybrid"), second["answer"][:80]
     assert second["citations"], "追问具体日期的售价应给出文档引用"
+
+
+# ---------------------------------------------------------------------------
+# 缺陷 C4：文档会话里的追问被“多少”降级回取数。
+# “供应商后来赔了多少”接着上一轮的停售话题，答案在供应商邮件（KB-022）里，
+# 但合成问题同时含上轮的“为什么”与本轮的“多少”，关键词打架后“多少”赢
+# → intent=data → 拿销量当答案。
+# ---------------------------------------------------------------------------
+
+DOC_HISTORY = [
+    {
+        "question": "三文鱼poke 七月初为什么停售了？",
+        "standalone": "三文鱼poke 七月初为什么停售了？",
+        "slots": {"kind": "doc", "metric": "net_revenue"},
+    }
+]
+
+
+def test_doc_followup_stays_doc(tmp_path):
+    svc = make_service(tmp_path)
+    plan = svc.planner.plan("供应商后来赔了多少？", history=DOC_HISTORY)
+    assert plan.intent in ("doc", "hybrid"), (
+        "文档话题的追问应继承 doc 意图，实际 intent=%s refusal=%s"
+        % (plan.intent, plan.refusal)
+    )
+
+
+def test_plain_data_followup_unaffected(tmp_path):
+    """对照：数字会话里的追问不受影响（仍走取数）。"""
+    svc = make_service(tmp_path)
+    plan = svc.planner.plan(
+        "那 7 月呢？",
+        history=[
+            {
+                "question": "6 月的净营业额是多少？",
+                "standalone": "6 月的净营业额是多少？",
+                "slots": {"kind": "summary", "metric": "net_revenue"},
+            }
+        ],
+    )
+    assert plan.intent in ("data", "hybrid"), plan.intent
