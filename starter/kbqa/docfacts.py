@@ -42,6 +42,10 @@ def carries_any_reason(text: str) -> bool:
     return carries("reason", text) or carries("reason_event", text)
 
 
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in text)
+
+
 class DocFacts:
     """文档侧的取证：挑句、扩引、逐字核对、表格行渲染。"""
 
@@ -146,12 +150,14 @@ class DocFacts:
                 elif term in unit.context:
                     # 标题带来的相关性是间接的，算一半。
                     hit += weight * 0.5
-            # 焦点完全对上的句子（问钱它就有 CNY 8,600）保底压过一切
-            # 只是"提到了对象"却答不上问题的句子——跨语言场景里答案句
-            # 与问句零词面重叠，纯靠词面分数它永远排在
-            # "Salmon delivery"这类标题句后面。
-            if kinds and self.focus_of(unit, kinds) == len(kinds):
-                hit = max(hit, 0.9 * total)
+            # 跨语言保底：答案句与问句零词面重叠（中文问、英文答，整句
+            # 不含 CJK），但焦点完全对上（问"赔了多少钱"，它就有
+            # CNY 8,600）——纯词面分数它永远排在"Salmon delivery"这类
+            # 标题句后面。floor 只对无 CJK 的单位生效，中文句子里
+            # "带焦点但答非所问"的句子不享受（否则备货损耗句会压过
+            # 真正含毛利率 35% 的答案）。
+            if kinds and self.focus_of(unit, kinds) == len(kinds) and not _has_cjk(unit.text):
+                hit = max(hit, 0.45 * total)
             if hit <= 0:
                 continue
             # 同样的覆盖率，短句子是更好的答案；标题与问句本身都不是答案。
@@ -162,7 +168,10 @@ class DocFacts:
                 score *= 0.6
             if kinds:
                 # 满足焦点的句子显著优先；一个都不满足的要让位。
-                score *= 1.0 + 0.8 * self.focus_of(unit, kinds) / len(kinds)
+                focus_score = self.focus_of(unit, kinds)
+                score *= 1.0 + 0.8 * focus_score / len(kinds)
+                if focus_score == 0:
+                    score *= 0.4  # 问句有明确焦点时，完全不沾焦点的句子让位
             scored.append((score, position, unit))
         # 分数相同时取文档里更靠前的那一句：一段话的第一句通常就是结论。
         scored.sort(key=lambda item: (-item[0], item[1]))
