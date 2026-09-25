@@ -67,7 +67,10 @@ class Service:
         return {
             "status": "ok",
             "llm_mode": self.settings.llm_mode,
-            "kb_docs": sum(1 for path in self.settings.kb_dir.rglob("*") if path.is_file()),
+            # 数"索引里的文档数"，不是目录里的文件数：
+            # 目录 README.md 不算文档（knowledge_base/README.md 规格明示 35 篇），
+            # 数文件会把 README 也算进去。
+            "kb_docs": len(self.index.docs_meta),
             "kb_chunks": len(self.index.chunks),
             "valid_sales_rows": self.tools.valid_sales_rows(),
             "today": self.settings.today.isoformat(),
