@@ -175,6 +175,21 @@ def _title_from_body(text: str, fallback: str) -> str:
     return fallback
 
 
+def _strip_html(text: str) -> str:
+    """html 转纯文本：去 script/style、剥标签、还原实体、合并空白。
+
+    旧实现"html 直接按文本入库，标签也就那么几个"——标签确实不碍检索
+    （分词会拆掉），但引用核对要求 quote 是原文的连续文字：评测对 html
+    按纯文本核对，带 <p> 的 quote 永远对不上。
+    """
+    text = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", text)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = html_module.unescape(text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n+", "\n", text)
+    return text.strip()
+
+
 def load_document(path: Path) -> Optional[Document]:
     """读一个文件。不是知识库文档（没有 KB 编号）时返回 None。"""
     warnings: list[str] = []
@@ -187,9 +202,9 @@ def load_document(path: Path) -> Optional[Document]:
     if fmt == "md":
         meta, text = parse_front_matter(text)
     elif fmt == "html":
-        # html 直接按文本入库，标签也就那么几个，BM25 自己会忽略。
         match_title = _HTML_TITLE.search(text)
         html_title = html_module.unescape(match_title.group(1).strip()) if match_title else ""
+        text = _strip_html(text)
         meta = {"title": html_title.split("-")[0].strip() or html_title}
 
     match = _DOC_ID.match(path.name)
