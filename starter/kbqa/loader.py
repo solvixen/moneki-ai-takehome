@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-SUPPORTED_SUFFIXES = {".md", ".markdown"}
+SUPPORTED_SUFFIXES = {".md", ".markdown", ".txt", ".html", ".htm"}
 
 #: 文件名开头的编号就是 doc_id，与文件格式无关（契约 §0）。
 _DOC_ID = re.compile(r"^(KB-\d+)")
@@ -80,8 +80,19 @@ _HTML_TITLE = re.compile(r"<title>(.*?)</title>", re.S | re.I)
 
 
 def decode_bytes(raw: bytes, path: Path, warnings: list[str]) -> str:
-    """统一按 UTF-8 读。个别老文件里有怪字符，忽略掉就行，不影响检索。"""
-    return raw.decode("utf-8", errors="ignore")
+    """按候选编码依次试解，全部失败才降级替换。
+
+    知识库里有 GBK 编码的旧 OA 导出（KB-062），quote 逐字核对按原编码语义来，
+    强按 UTF-8 ignore 会把中文读成乱码，检索与引用两头全废。
+    gb18030 是 GBK 的超集，兼容老编码的所有变体。
+    """
+    for encoding in ("utf-8", "gb18030"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    warnings.append("无法识别文件编码，按 UTF-8 替换读取：%s" % path.name)
+    return raw.decode("utf-8", errors="replace")
 
 
 def parse_front_matter(text: str) -> tuple[dict, str]:
