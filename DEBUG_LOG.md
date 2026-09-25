@@ -238,3 +238,20 @@
 - multi_turn 9/9、safety 9/9、version 6/6、data 12/12、metrics 6/6、refusal 8/8、health 1/1 全满。
 - 剩余 10 分已知清单：R04+C04（3 分，中文 query 打英文邮件 KB-022 的跨语言检索，需别名扩展）、C02（2 分，表格行引用未带表头，牛肉poke 行只有 ✓ 标记）、C07（2 分，`extend_to_cause` 因果句拼接未带上"毛利率 35%"句）、H03（3 分，KB-028 目标句被切为"…目标销量"/"900 杯"跨句，`_TARGET` 正则单句匹配不到）。
 - 环境坑（重建必读）：沙箱/杀毒软件可能拦截 rebuild 删除 `var/clean.db` 导致重建中断但缓存键已更新——**重建后必须抽查缓存内容**（如 KB-061 的 chunk 是否干净），不要只看"缓存键"输出。
+
+## 缺陷 21（E1）：模型请求被环境代理截胡，live 模式全部 502
+
+| 六栏 | 内容 |
+|---|---|
+| 现象 | 服务配好 `LLM_BASE_URL/LLM_API_KEY/LLM_MODEL` 后（`llm_mode: live`），`/api/chat` 一律返回"接口返回错误码 502"或"网络异常"；手动 curl 假网关却正常 |
+| 定位 | 假网关控制面 `__control/requests` 显示**零请求到达**——请求根本没出进程。读环境变量：`HTTP_PROXY=http://127.0.0.1:60084`；httpx 默认 `trust_env=True` 会走环境代理，本机地址被代理转发后拒绝（os error 10061），代理回 502 |
+| 根因 | LLM 客户端没禁用环境代理。`LLM_BASE_URL` 按契约由评审直接注入、可直连，走环境代理既无必要又引入不可控故障点 |
+| 修复 | commit `021603a`：`httpx.post(..., trust_env=False)`。需要代理的场景（如 llm_gateway proxy 模式）直接把代理地址写进 `LLM_BASE_URL`，本身就是契约推荐做法 |
+| 回归测试 | `test_batch5_llm.py` 全套 11 例：假模型驱动真实 Service，覆盖正常两轮工具调用、双工具调用、reasoning_content 回传、六种失败场景转结构化 refusal、hang 超时、无 Key 降级 |
+| 经验 | "服务发了请求但对面没收到"先查环境代理，再查端口；502 的"upstream connect failed"是代理的口吻，不是目标的 |
+
+## 验证结果（批次 5）
+
+- `pytest tests`：**76 passed**（批次 5 新增 11：正常两轮 / 双工具调用 / reasoning 回传 / empty_content、length、content_filter、insufficient_system_resource、aborted、http_500 六种失败转 refusal / bad_tool_args / hang 超时 / 无 Key 降级）。
+- `eval/llm_gateway.py preflight`：**14/14 全部通过**（P1 地址原样、P2 模型名、P3 Bearer Key、P4 无文档外参数、P5 max_tokens≥2048、P6 无越界路径、P7 工具回传、P8 200+合法 JSON、P9 结构化 refusal、P10 思考不外漏、P11 时限内返回、P12 llm_mode=live、P13 reasoning 原样回传、P14 keep-alive 兼容），输出已贴 `LLM_SETUP.md` 第 7 节。
+- 环境坑（预检必读）：Windows 上对同一端口重复 bind 不报错（SO_REUSEADDR 语义），先手动起过假网关再跑 preflight 会导致**双绑定**、流量进旧进程，P1 报"一次请求都没收到"——跑预检前先确认端口空闲。
