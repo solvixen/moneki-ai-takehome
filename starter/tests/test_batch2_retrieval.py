@@ -116,6 +116,34 @@ def test_hit_doc_id_matches_its_own_chunk(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# 缺陷 B6：loader 元数据键名 "state" 与消费方读取的 "status" 对不上，
+# 版本路由（已废止过滤）从未生效
+# ---------------------------------------------------------------------------
+
+
+def test_superseded_doc_is_filtered_out(tmp_path):
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    v1 = (
+        "---\ntitle: 储值政策 v1\ntype: 政策\nstatus: 已废止\n"
+        "superseded_by: KB-806\neffective_from: 2026-01-01\n---\n"
+        + "储值卡余额不可提现，只能到店消费。" * 20
+    )
+    v2 = (
+        "---\ntitle: 储值政策 v2\ntype: 政策\nstatus: 现行\n"
+        "effective_from: 2026-01-01\n---\n"
+        + "储值卡余额支持提现到银行卡。" * 20
+    )
+    (kb / "KB-805_储值政策v1.md").write_text(v1, encoding="utf-8")
+    (kb / "KB-806_储值政策v2.md").write_text(v2, encoding="utf-8")
+    index = build_index(kb)
+    result = Retriever(index, today=date(2026, 9, 1)).search("储值卡", top_k=3)
+    reasons = {f["doc_id"]: f["reason"] for f in result.filtered}
+    assert "KB-805" in reasons, "已废止且被取代的版本必须进入过滤名单"
+    assert all(h.doc_id != "KB-805" for h in result.hits), "已废止版本不能出现在结果里"
+
+
+# ---------------------------------------------------------------------------
 # 缺陷 B5：allowed 没排除已过滤文档，占坑后被末端踢掉，top_k 凑不满
 # ---------------------------------------------------------------------------
 
