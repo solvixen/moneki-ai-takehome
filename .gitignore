@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 运行时产物（make rebuild 可再生）
+var/
+
+# IDE
+.idea/
+.vscode/
+
+# 评测输出（每次运行重新生成；基线证据已另行存档在 EVAL_REPORT.md）
+report.json
+report.md
