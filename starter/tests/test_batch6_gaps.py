@@ -67,22 +67,38 @@ def test_cause_sentence_stays_whole(service):
     assert whole, "毛利率句被劈开：%s" % [s for s in sentences if "毛利率" in s]
 
 
-def test_no_mid_sentence_chunk_seams(service):
-    """通用断言：任何 chunk 的接缝都不许落在句子中间。"""
-    from kbqa.units import _SENTENCE_TAIL
+def test_no_sentence_spans_chunks(service):
+    """通用断言：中文文档按句切出来的每句话，必须完整落在某个 chunk 里。
 
-    for chunk in service.retriever.index.chunks:
-        text = chunk.source_text
-        if chunk.kind == "table" or not text:
-            continue
-        for line in text.splitlines():
-            line = line.strip()
-            if len(line) < 8 or line.endswith(_SENTENCE_TAIL) or line.endswith("|"):
-                continue
-            # 行末既不是句尾也不是表格线——只允许是文档的最后一行被截断
-            assert chunk.chunk_id.endswith("#1") or len(text) < 300, (
-                "chunk %s 在句子中间断开：%r" % (chunk.chunk_id, line[-30:])
-            )
+    英文文档（KB-022）段落超长且按 . 分句，由专门的
+    test_english_settlement_sentence_pickable 覆盖。
+    """
+    from kbqa.sanitize import split_sentences
+    from kbqa.units import _lines_of
+
+    index = service.retriever.index
+    checked = 0
+    for doc_id in index.docs_meta:
+        full_text = index.texts.get(doc_id, "")
+        if not any("\u4e00" <= char <= "\u9fff" for char in full_text):
+            continue  # 纯英文文档另测
+        fmt = index.docs_meta[doc_id].get("format", "md")
+        chunks = [_squash(chunk.text) for chunk in index.chunks_of(doc_id)]
+        for line in _lines_of(full_text, fmt):
+            for sentence in split_sentences(line):
+                sentence = sentence.strip().lstrip("#").strip()
+                if len(sentence) < 12:
+                    continue
+                needle = _squash(sentence)
+                assert any(needle in chunk for chunk in chunks), (
+                    "%s 的这句话跨 chunk 了：%s" % (doc_id, sentence[:40])
+                )
+                checked += 1
+    assert checked > 100, "断言没真正跑起来（只查了 %d 句）" % checked
+
+
+def _squash(text: str) -> str:
+    return "".join(text.split())
 
 
 # --------------------------------------------------------------------------- #
@@ -121,5 +137,5 @@ def test_english_settlement_sentence_pickable(service):
         "三文鱼那次断供，供应商最后赔了我们多少钱？", "KB-022", limit=3
     )
     assert ranked, "KB-022 里挑不出任何句子"
-    joined = " ".join(text for _, text in ranked)
+    joined = " ".join(unit.text for _, unit in ranked)
     assert "8,600" in joined or "8600" in joined, joined[:200]

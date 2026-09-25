@@ -91,7 +91,13 @@ class Answerer(HybridAnswers):
                 break
             new_terms = set(tokenize(candidate["sentence"])) & query_terms
             if citations and not (new_terms - used_terms):
-                continue
+                # 例外：与问句零词面重叠但焦点完全对上的句子（跨语言场景，
+                # 中文问"赔了多少钱"、英文答 "credit note of CNY 8,600"），
+                # 它本身就是问句要的新信息，不能被词面闸门挡掉。
+                kinds = focus_kinds(plan.standalone)
+                fully_on_focus = kinds and self.facts.focus_of(candidate["unit"], kinds) == len(kinds)
+                if not fully_on_focus:
+                    continue
             unit = candidate["unit"]
             if "reason" in focus_kinds(plan.standalone):
                 unit = self.facts.extend_to_cause(unit)

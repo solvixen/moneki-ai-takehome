@@ -24,6 +24,10 @@ WINDOW_BOOST = 1.8
 DOC_PRIOR = 0.35
 #: 别名词典本身不是答案，得压一压，不然它永远排第一。
 ALIAS_DOC_PENALTY = 0.5
+#: 中文问句问英文文档时，别名里的英文写法是唯一桥梁（KB-022 全文只写
+#: Salmon，"赔了多少钱"那一段不含任何中文查询词）。此时英文变体按正经
+#: 查询词计权，而不是当可有可无的补充——否则英文文档永远进不了 top-k。
+CROSS_LANG_WEIGHT = 1.5
 #: 周报、纪要里的数字是人工估的，问数字的时候给它们降点权。
 ESTIMATE_DOC_PENALTY = 0.7
 #: top-k 里一篇文档最多占一格：多留几篇不同的文档，比同一篇留两段有用；
@@ -169,11 +173,19 @@ class Retriever:
         """
         merged: dict[int, float] = {}
         expansions: list[str] = []
+        # 问句里本来就有英文词时，英文变体只是普通补充；问句纯中文而
+        # 对象的写法里有英文（Salmon Poke）时，它是唯一的跨语言桥梁。
+        query_ascii = any(token.isascii() and len(token) >= 2 for token in tokenize(query))
         for canonical in self.index.aliases.mentions(query) + self._store_concepts(query):
             variants = self.index.aliases.variants(canonical)
             best: dict[int, float] = {}
             for variant in variants:
-                weights = {token: ALIAS_WEIGHT for token in tokenize(variant)}
+                weight = ALIAS_WEIGHT
+                if not query_ascii and any(
+                    token.isascii() and len(token) >= 4 for token in tokenize(variant)
+                ):
+                    weight = CROSS_LANG_WEIGHT
+                weights = {token: weight for token in tokenize(variant)}
                 if not weights:
                     continue
                 for position, score in self.index.score_terms(weights, allowed).items():

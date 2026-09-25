@@ -78,8 +78,11 @@ def test_chunker_keeps_tail(tmp_path):
     doc = load_document(kb / "KB-905_退款政策.md")
     chunks = chunk_document(doc)
     joined = "".join(c.text for c in chunks)
-    assert len(joined) == len(doc.text), "所有切块拼起来必须覆盖全文，不能丢尾巴"
-    assert doc.text[-20:] in joined
+    squash = lambda t: "".join(t.split())
+    assert squash(joined) == squash(doc.text), (
+        "所有切块拼起来（去空白后）必须与全文逐字一致，不能丢尾巴"
+    )
+    assert squash(doc.text[-20:]) in squash(joined)
 
 
 # ---------------------------------------------------------------------------

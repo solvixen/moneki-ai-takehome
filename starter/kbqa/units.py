@@ -14,7 +14,8 @@ MAX_QUOTE = 400
 _SENTENCE_TAIL = "。！？；!?;"
 _LIST_START = re.compile(r"^\s*(?:[-*>|]|#{1,6}\s|\d+[.、)]|[一二三四五六七八九十]+[、.])")
 #: “发布部门：总部运营部”这类字段行是独立的一条信息，不能和上一行拼成一句。
-_FIELD_LINE = re.compile(r"^[^：:\s]{1,6}[：:]")
+#: 上限 12：要罩住英文邮件的 "Subject:"（7 字母）这类字段名。
+_FIELD_LINE = re.compile(r"^[^：:\s]{1,12}[：:]")
 
 
 def _lines_of(text: str, fmt: str) -> list[str]:
@@ -28,6 +29,7 @@ def _lines_of(text: str, fmt: str) -> list[str]:
             merged
             and len(merged[-1]) >= 20
             and merged[-1][-1] not in _SENTENCE_TAIL
+            and not merged[-1].lstrip().startswith("#")
             and not _LIST_START.match(line)
             and not _FIELD_LINE.match(line)
             and not _FIELD_LINE.match(merged[-1])

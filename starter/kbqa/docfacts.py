@@ -11,6 +11,9 @@ from .units import MAX_QUOTE, Unit, UnitIndex
 
 MARKERS = {"✓", "✔", "√", "有", "×", "✗", "—", "-", "无", "N/A"}
 
+#: markdown 表格的分隔行（|---|---|）。
+_TABLE_SEP = re.compile(r"^\|[\s:|-]+\|$")
+
 #: 一句话里有没有“问句要的那种东西”。问句焦点是钱就找金额，是原因就找因果说明，
 #: 是时长就找“24 小时内”这类跨度，是商品就找真的写了商品名的句子。
 _CARRIES = {
@@ -45,6 +48,7 @@ class DocFacts:
     def __init__(self, index) -> None:
         self.index = index
         self.store = UnitIndex(index)
+        self._table_headers: dict[str, list[str]] = {}
 
     # -- 委托给 units.py --------------------------------------------------------
 
@@ -76,6 +80,12 @@ class DocFacts:
         terms = set(content_tokens(query))
         for canonical in index.aliases.mentions(query):
             terms.update(content_tokens(canonical))
+            # 跨语言：中文问句问英文文档（KB-022 通篇只写 Salmon）时，
+            # 把该对象独有的英文写法也当查询词，英文句子里才挑得出证据。
+            for variant in index.aliases.variants(canonical):
+                for token in tokenize(variant):
+                    if len(token) >= 4 and token.isascii() and index.doc_freq.get(token):
+                        terms.add(token)
         weights = {}
         for term in terms:
             if not index.doc_freq.get(term):
@@ -136,6 +146,12 @@ class DocFacts:
                 elif term in unit.context:
                     # 标题带来的相关性是间接的，算一半。
                     hit += weight * 0.5
+            # 焦点完全对上的句子（问钱它就有 CNY 8,600）保底压过一切
+            # 只是"提到了对象"却答不上问题的句子——跨语言场景里答案句
+            # 与问句零词面重叠，纯靠词面分数它永远排在
+            # "Salmon delivery"这类标题句后面。
+            if kinds and self.focus_of(unit, kinds) == len(kinds):
+                hit = max(hit, 0.9 * total)
             if hit <= 0:
                 continue
             # 同样的覆盖率，短句子是更好的答案；标题与问句本身都不是答案。
@@ -266,7 +282,30 @@ class DocFacts:
         for unit in self.units(doc_id):
             if unit.kind == "table" and unit.text == line.strip():
                 return unit.header
-        return []
+        return self._doc_table_header(doc_id)
+
+    def _doc_table_header(self, doc_id: str) -> list[str]:
+        """直接从文档文本解析表格表头（带缓存）。
+
+        chunker 从不产生 kind="table" 的块，走 units 那条路永远拿不到表头，
+        render_row 只能退化成原始竖线行——"麸质/大豆/芝麻"这些列名全丢，
+        顾客问过敏原得到的答案是一排没人看得懂的 ✓。
+        表头判定：第一行以 | 开头、且下一行是 |---| 分隔线的行。
+        """
+        cached = self._table_headers.get(doc_id)
+        if cached is not None:
+            return cached
+        header: list[str] = []
+        lines = (self.index.texts.get(doc_id, "") or "").splitlines()
+        for position, line in enumerate(lines[:-1]):
+            stripped = line.strip()
+            if not stripped.startswith("|"):
+                continue
+            if _TABLE_SEP.match(lines[position + 1].strip()):
+                header = [cell.strip() for cell in stripped.strip("|").split("|")]
+                break
+        self._table_headers[doc_id] = header
+        return header
 
     def render(self, doc_id: str, sentence: str) -> str:
         if sentence.strip().startswith("|"):
