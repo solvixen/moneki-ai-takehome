@@ -147,3 +147,12 @@ def test_loader_strips_html_tags(tmp_path):
     text = "\n".join(chunk.text for chunk in index.chunks)
     assert "<p>" not in text and "<html" not in text, text[:120]
     assert "订单号" in text, "剥标签后正文必须保留"
+
+
+def test_invoice_cites_the_right_doc(tmp_path):
+    """D5：候选句排序曾为升序——分数最低的垃圾句排最前被优先引用。
+    发票答案在 KB-061（检索 top1、句分 0.53），修复前却引 KB-021（0.035）。"""
+    svc = make_service(tmp_path)
+    result = svc.chat("S3", "顾客要开发票，怎么跟他说？")
+    cited = [c["doc_id"] for c in result["citations"]]
+    assert "KB-061" in cited, cited

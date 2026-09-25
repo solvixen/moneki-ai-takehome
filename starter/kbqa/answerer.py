@@ -75,7 +75,7 @@ class Answerer(HybridAnswers):
         candidates = self._candidates(plan, result, require_value=True)
         if not candidates:
             candidates = self._candidates(plan, result, require_value=False)
-        candidates.sort(key=lambda item: (round(item["score"], 2), item["effective_from"]))
+        candidates.sort(key=lambda item: (round(item["score"], 2), item["effective_from"]), reverse=True)
         lines: list[str] = []
         citations: list[dict] = []
         used_terms: set[str] = set()
