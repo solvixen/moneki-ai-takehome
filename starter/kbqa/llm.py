@@ -87,6 +87,8 @@ class LLMClient:
             "prompt": _preview(json.dumps(messages, ensure_ascii=False)),
         }
         try:
+            # trust_env=False：LLM_BASE_URL 由评审直接注入、可直连，
+            # 不走环境代理（HTTP_PROXY 等）——本机假网关曾被系统代理截成 502。
             response = httpx.post(
                 self.endpoint,
                 json=body,
@@ -95,6 +97,7 @@ class LLMClient:
                     "Content-Type": "application/json",
                 },
                 timeout=httpx.Timeout(timeout or self.timeout, connect=15.0),
+                trust_env=False,
             )
         except httpx.TimeoutException as exc:
             record.update(error="timeout", detail=str(exc))

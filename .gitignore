@@ -14,3 +14,8 @@ var/
 # 评测输出（每次运行重新生成；基线证据已另行存档在 EVAL_REPORT.md）
 report.json
 report.md
+
+# 测试临时目录与预检报告（可重新生成；结论已贴进 LLM_SETUP.md）
+.tmp-var/
+preflight_report.json
+preflight_report.md
