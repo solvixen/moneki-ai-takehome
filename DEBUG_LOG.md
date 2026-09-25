@@ -255,3 +255,22 @@
 - `pytest tests`：**76 passed**（批次 5 新增 11：正常两轮 / 双工具调用 / reasoning 回传 / empty_content、length、content_filter、insufficient_system_resource、aborted、http_500 六种失败转 refusal / bad_tool_args / hang 超时 / 无 Key 降级）。
 - `eval/llm_gateway.py preflight`：**14/14 全部通过**（P1 地址原样、P2 模型名、P3 Bearer Key、P4 无文档外参数、P5 max_tokens≥2048、P6 无越界路径、P7 工具回传、P8 200+合法 JSON、P9 结构化 refusal、P10 思考不外漏、P11 时限内返回、P12 llm_mode=live、P13 reasoning 原样回传、P14 keep-alive 兼容），输出已贴 `LLM_SETUP.md` 第 7 节。
 - 环境坑（预检必读）：Windows 上对同一端口重复 bind 不报错（SO_REUSEADDR 语义），先手动起过假网关再跑 preflight 会导致**双绑定**、流量进旧进程，P1 报"一次请求都没收到"——跑预检前先确认端口空闲。
+
+## 缺陷 22（F）：切块硬切劈句 + 表格无表头 + 跨语言检索不通（批次 6，最后 10 分）
+
+三个案子共用一个根因（300 字硬切把一句话劈成两块），跨语言是独立根因：
+
+| 六栏 | 内容 |
+|---|---|
+| 现象 | H03"目标销量 900 杯"匹配不到目标（块断成"…目标销量"/"900 杯"）；C07 因果句只剩"损耗"半句、毛利率 35% 丢失；C02 过敏原行渲染成一排 ✓（表头丢失）；C04/R04 中文问句打全英文邮件 KB-022 检索/挑句两层都不通 |
+| 定位 | ①chunker 按 CHUNK_SIZE 硬切，下游按句取证全建立在"句不跨块"假设上；②chunker 从不产生 kind=table，table_header_for 永远空，render_row 退化原始行；③检索层英文别名变体权重 0.6 太低且挑句层根本不把英文词当查询词 |
+| 修复 | F1 chunker-4：合并折行→按句切→单句超长才硬切，标题不吸收正文（commit `db7cfee`）；F2 表头直接从文档文本解析（首行竖线开头且次行为分隔线）；F3 检索层 CROSS_LANG_WEIGHT=1.5、挑句层把对象独有英文词加入查询词、零词面重叠但焦点全对上的句子给 0.45 保底、引用闸门放行焦点对上的第二引用 |
+| 回归测试 | test_batch6_gaps.py 6 例：目标句/因果句完整、句不跨块（中文全库扫描）、过敏原行渲染、跨语言 top5、英文赔偿句可挑出 |
+| 经验 | 中间版本的 0.9 钝性 floor 修好 KB-022 却把中文"带焦点但答非所问"的句子抬上去（修 10 丢 10）——保底必须限定在真正无法词面匹配的场景（无 CJK），并给不沾焦点的句子降权；评测逐题对比是发现"按下葫芦浮起瓢"的唯一手段 |
+
+## 验证结果（批次 6 / 最终交付）
+
+- `pytest tests`：**82 passed**。
+- 公开题库（mock 模式）：**100.00 / 100.00，全部 10 类满分**（hybrid 18/18、doc 16/16、retrieval 15/15、data 12/12、multi_turn 9/9、safety 9/9、refusal 8/8、metrics 6/6、version 6/6、health 1/1）。
+- 基线复现：worktree 检出 `5ee86ed` 原始 starter 实测 **17/100**（baseline_report/report.json 入库作证）；此前 commit message 声称的 baseline_eval.txt 实际从未提交——评测证据必须真跑真存。
+- preflight 14/14、live 冒烟（真实 DeepSeek）通过；必交文件齐备：README（含架构图）/DEBUG_LOG/EVAL_REPORT/LLM_SETUP/AI_USAGE/DEMO。
