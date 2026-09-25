@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from .loader import Document
 
 #: 切块参数变了，索引缓存必须失效，所以写进缓存键里。
-CHUNKER_VERSION = "chunker-2"
+CHUNKER_VERSION = "chunker-3"
 
 CHUNK_SIZE = 300
 
@@ -35,10 +35,15 @@ class Chunk:
 
 
 def chunk_document(document: Document) -> list[Chunk]:
-    """一篇文档按固定长度切开，300 字一块。"""
+    """一篇文档按固定长度切开，300 字一块，最后不足一块的尾巴单独成块。
+
+    旧实现的 range(0, len-CHUNK_SIZE, CHUNK_SIZE) 把右边界内缩了一块：
+    600 字正好切完，601 字就会丢掉最后 301 字——文档结尾的政策细节
+    恰恰是引用核对（quote）最常命中的地方。
+    """
     text = document.text
     chunks: list[Chunk] = []
-    for number, start in enumerate(range(0, len(text) - CHUNK_SIZE, CHUNK_SIZE), start=1):
+    for number, start in enumerate(range(0, len(text), CHUNK_SIZE), start=1):
         piece = text[start : start + CHUNK_SIZE]
         chunks.append(
             Chunk(
