@@ -15,7 +15,7 @@ from .chunker import CHUNKER_VERSION, Chunk, chunk_documents
 from .loader import Document, load_knowledge_base
 from .tokenizer import TOKENIZER_VERSION, tokenize
 
-INDEX_VERSION = "bm25-3"
+INDEX_VERSION = "bm25-4"
 K1 = 1.5
 B = 0.75
 
