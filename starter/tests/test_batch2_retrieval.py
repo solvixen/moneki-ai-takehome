@@ -159,11 +159,11 @@ def test_excluded_version_does_not_eat_top_k(tmp_path):
     v2 = (
         "---\ntitle: 储值政策 v2\ntype: 政策\nstatus: 现行\n"
         "effective_from: 2026-01-01\n---\n"
-        + "储值卡余额支持提现到银行卡。" * 20
+        + "储值卡余额支持提现到银行卡。" * 60  # 多块：排除 KB-805 后场上仍要够 top_k
     )
     (kb / "KB-805_储值政策v1.md").write_text(v1, encoding="utf-8")
     (kb / "KB-806_储值政策v2.md").write_text(v2, encoding="utf-8")
-    (kb / "KB-807_员工手册.md").write_text("# 员工手册\n" + "考勤打卡规定。" * 40, encoding="utf-8")
+    (kb / "KB-807_员工手册.md").write_text("# 员工手册\n" + "考勤打卡规定。" * 80, encoding="utf-8")
     index = build_index(kb)
     result = Retriever(index, today=date(2026, 9, 1)).search("储值卡余额", top_k=3)
     assert all(h.doc_id != "KB-805" for h in result.hits), "已废止版本不能出现在结果里"

@@ -237,7 +237,14 @@ class Retriever:
             if reason:
                 excluded.add(doc_id)
                 filtered.append({"doc_id": doc_id, "reason": reason})
-        allowed = set(range(len(self.index.chunks)))
+        # 先过滤再截断（契约 §4）：被元数据过滤掉的文档，其片段一律不许进入
+        # 打分与补齐。旧实现 allowed 是全量片段，已废止版本先占走 top_k 的坑，
+        # 末端再把它们踢掉，结果凑不满 top_k。
+        allowed = {
+            position
+            for position, chunk in enumerate(self.index.chunks)
+            if chunk.doc_id not in excluded
+        }
 
         scores = self.index.score_terms(self._weights(query), allowed)
         concepts, expansions = self._concept_scores(query, allowed)
