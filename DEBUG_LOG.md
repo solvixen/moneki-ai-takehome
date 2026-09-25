@@ -130,8 +130,54 @@
 | 修复 | commit `69ff3f8`：client 降为函数级 + `monkeypatch.setattr` 打补丁自动恢复；API 测试行为不变 |
 | 回归测试 | 全量 43 个测试绿（starter 17 + 批次 1 18 + 批次 2 8），批次 2 测试不再受测试顺序影响 |
 
+## 缺陷 12（C1）：SessionStore 无视 session_id，所有会话共用一份历史
+
+| 项 | 内容 |
+|---|---|
+| 现象 | 两个不同 session_id 的会话互相"记得"对方问过什么；追问评测 T 类大量失分 |
+| 假设 | session_id 在某处被丢弃了？还是存储本身就是全局的？ |
+| 验证 | 直接读 `sessions.py`：`self._turns: list` 只有一个列表，`history()`/`append()` 的 `session_id` 参数完全没被使用 |
+| 根因 | `starter/kbqa/sessions.py`：存储结构是全局列表，`session_id` 是摆设——不同会话必然串线，且全局裁剪让单会话历史比 `max_turns` 更短 |
+| 修复 | commit `7fbb3ee`：`OrderedDict` 按 session_id（含 None）分桶，各会话独立裁剪；会话数超限按 LRU 淘汰 |
+| 回归测试 | `test_batch3_multiturn.py::test_session_store_isolates_and_prunes`：A 的历史被 B 看到红，修复后绿 |
+
+## 缺陷 13（C2）：service 取了 history 却没传给 planner，追问永远按"无上文"处理
+
+| 项 | 内容 |
+|---|---|
+| 现象 | T01 第 2 轮"那 7 月呢？"返回 clarify（"这个会话里没有上文"），但第 1 轮明明问过 6 月 |
+| 假设 | ① followup 还原逻辑坏了？② planner 根本没收到 history？ |
+| 验证 | 读 `planner.py`：`plan(question, history)` 签名支持 history，`followups.resolve`/`inherit_time` 全链写好了；再看 `service.py:159`——`history` 变量取了，`planner.plan(question)` 调用时没传。spy 测试坐实：第二轮收到的 history 是 None |
+| 根因 | `starter/kbqa/service.py::_answer`：接线断了一行。下游整套追问机制形同虚设 |
+| 修复 | commit `17ed5ec`：改为 `planner.plan(question, history)` |
+| 回归测试 | `test_planner_receives_history`（spy 断言第二轮 history 非空）+ `test_chat_sessions_do_not_cross`（A 追问得 7 月净营业额 162414，B 无上文得 clarify）修复前红，修复后绿 |
+
+## 缺陷 14（C3）："多少钱"被"多少"路由规则打回取数，价格问题答成区间外拒绝
+
+| 项 | 内容 |
+|---|---|
+| 现象 | T03 第 1 轮"牛肉poke 现在多少钱一份？"返回 refusal"数据库里只有 2026-05-01 至 2026-08-31 的销售明细"——问的是当前售价，答案在调价文档 KB-025 里 |
+| 假设 | ① `_choose_kind` 没识别出价格意图？② 识别了但被别的规则覆盖？ |
+| 验证 | `_choose_kind` 第一段确实判出 `price/hybrid`（asks_price + product_id）；但末端路由规则"句子含多少/多久/几 → intent=data、kind 降级为 summary"把它覆盖了。"多少钱一份"必然含"多少"，price 意图永远活不过这一条 |
+| 根因 | `starter/kbqa/planner.py::_choose_kind` 末端路由：关键词降级规则无例外，把已正确识别的 price 意图打回取数 → "现在"=2026-09-01 在数据区间外 → refusal |
+| 修复 | commit `eeddefa`：`plan.kind != "price"` 才执行"多少"降级。范围最小化：`多久`等其他词的降级行为不动（牵连文档题路由，属作答层批次） |
+| 回归测试 | `test_price_question_routes_to_doc_not_data`（intent ∈ doc/hybrid 且无 refusal）+ `test_followup_on_price_inherits_product` 修复前红，修复后绿 |
+
+## 缺陷 15（C4）：文档话题的追问，合成句里"为什么"与"多少"打架后被降级成取数
+
+| 项 | 内容 |
+|---|---|
+| 现象 | T02 第 3 轮"供应商后来赔了多少？"（上一轮问的是三文鱼停售原因）返回了 7 月销量数字——答案其实在供应商邮件 KB-022（赔偿 8600）里 |
+| 假设 | 追问还原把上一轮的"为什么"和新句子的"多少"拼进了同一句 standalone，末端路由关键词打架？ |
+| 验证 | 手动构造 history 调 `planner.plan("供应商后来赔了多少？", history=[doc 轮])`：standalone = "三文鱼poke 七月初为什么停售了 供应商后来赔了多少"，含两个冲突关键词；路由逻辑里"多少"分支先执行获胜 → intent=data |
+| 根因 | `planner.py::_choose_kind` 末端路由无上下文感知：文档会话的追问应继承 doc 意图，不能因为新句子带"多少"就被打回查销量 |
+| 修复 | commit `9f14699`：resolve 发生时把上一轮 kind 记入 `slots.inherited_kind`；上一轮是 doc 的追问不受"多少"降级影响。对照组守护：数字会话的追问行为不变（`test_plain_data_followup_unaffected`） |
+| 回归测试 | `test_doc_followup_stays_doc` 修复前红（intent=data），修复后绿；全量 50 passed |
+
 ## 验证结果
 
-- `pytest tests`：43 passed（starter 原有 17 + 批次 1 新增 18 + 批次 2 新增 8）。
+- `pytest tests`：50 passed（starter 原有 17 + 批次 1 新增 18 + 批次 2 新增 8 + 批次 3 新增 7）。
 - `python eval/run_eval.py --only metrics`：**6.00 / 6.00**（修复前该类仅 M05 得分）。
 - M01 全字段与金标一致：net_revenue 156757.0 / refund_amount 953.0 / orders 4311 / aov 36.36 / qty 6496。
+- 公开题库总分（mock 模式）：17 → 35（批次 1）→ 46（批次 2）→ **55**（批次 3）。
+- multi_turn：2/9 → **8/9**；T01/T03 满分，T02 剩余 1 分挂在 `_answer_doc` 引用构造（cite_all 期望 KB-021 实际 KB-031/040），属作答层批次范围。
