@@ -1,16 +1,22 @@
-"""把原始 sales 导进 var/clean.db，指标都查这张表。"""
+"""把原始 sales 导进 var/clean.db，指标都查这张表。清洗规则 = KB-001 v3 §2/§3。"""
 
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import date as _date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterable, Optional
 
 #: 金额里的 `¥` 去掉再按数字解析。
 _CURRENCY = str.maketrans("", "", "¥￥ \t　")
+
+_DATE_ISO = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
+_DATE_SLASH = re.compile(r"(\d{4})/(\d{1,2})/(\d{1,2})")
+_DATE_DMY = re.compile(r"(\d{1,2})-(\d{1,2})-(\d{4})")
 
 REMOVAL_REASONS = (
     "1_unparseable_date",
@@ -20,6 +26,28 @@ REMOVAL_REASONS = (
     "5_product_not_in_products",
     "6_duplicate_row",
 )
+
+
+def parse_date(value: Optional[str]) -> Optional[str]:
+    """KB-001 §2.2：接受 YYYY-MM-DD、YYYY/M/D、DD-MM-YYYY 三种格式。
+
+    第三种是旧 POS 导出，**日在前月在后**：`07-06-2026` 是 2026-06-07。
+    解析不了（含日历上不存在的日期）返回 None，由 §3.1 剔除。
+    统一返回 ISO `YYYY-MM-DD`，后续查询全部基于规范形态。
+    """
+    text = (value or "").strip()
+    m = _DATE_ISO.fullmatch(text) or _DATE_SLASH.fullmatch(text)
+    if m:
+        year, month, day = int(m[1]), int(m[2]), int(m[3])
+    else:
+        m = _DATE_DMY.fullmatch(text)
+        if not m:
+            return None
+        day, month, year = int(m[1]), int(m[2]), int(m[3])
+    try:
+        return _date(year, month, day).isoformat()
+    except ValueError:
+        return None
 
 
 def parse_amount(value: Optional[str]) -> tuple[Optional[int], str]:
@@ -74,28 +102,56 @@ def open_readonly(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def clean_rows(rows: Iterable[sqlite3.Row]) -> tuple[list[tuple], CleaningReport]:
-    """把 sales 原样搬过来。金额解析不了的按 0，日期照抄，查询的时候直接比字符串。"""
+def clean_rows(
+    rows: Iterable[sqlite3.Row],
+    valid_stores: set[str],
+    valid_products: set[str],
+) -> tuple[list[tuple], CleaningReport]:
+    """按 KB-001 v3 清洗：先规范化，再按 §3 顺序剔除，最后去重。
+
+    - §2.1 门店/商品编号去空白转大写后再校验外键（顺序反了会误删真实订单）。
+    - §2.3 `¥38.00` 与 `38.00` 同一个金额；带符号的行是退款，必须保留。
+    - §3.2 空金额直接剔除，不回填。非空但解析不了的写法手册未定义，
+      拍板：同样剔除，单独记在 note_unparseable_amount（README 有取舍说明）。
+    - §3.6 只有七个字段规范化后完全一致的行才算重复；共用订单号的不同
+      商品行是合法多行订单，全部保留。
+    """
     report = CleaningReport()
     kept: list[tuple] = []
+    seen: set[tuple] = set()
     for row in rows:
         report.raw_rows += 1
+        date_iso = parse_date(row["date"])
+        if date_iso is None:
+            report.removed["1_unparseable_date"] += 1
+            continue
         cents, status = parse_amount(row["amount"])
-        if status != "ok":
-            cents = 0
-        qty = parse_qty(row["qty"]) or 0
-        kept.append(
-            (
-                (row["order_id"] or "").strip(),
-                row["date"],
-                row["store_id"],
-                row["product_id"],
-                qty,
-                cents,
-                (row["payment"] or "").strip(),
-                1 if cents < 0 else 0,
-            )
-        )
+        if status == "empty":
+            report.removed["2_empty_amount"] += 1
+            continue
+        if status == "bad":
+            report.note_unparseable_amount += 1
+            continue
+        qty = parse_qty(row["qty"])
+        if qty is None or qty <= 0:
+            report.removed["3_qty_le_zero"] += 1
+            continue
+        store_id = (row["store_id"] or "").strip().upper()
+        product_id = (row["product_id"] or "").strip().upper()
+        if store_id not in valid_stores:
+            report.removed["4_store_not_in_stores"] += 1
+            continue
+        if product_id not in valid_products:
+            report.removed["5_product_not_in_products"] += 1
+            continue
+        order_id = (row["order_id"] or "").strip()
+        payment = (row["payment"] or "").strip()
+        record = (order_id, date_iso, store_id, product_id, qty, cents, payment)
+        if record in seen:
+            report.removed["6_duplicate_row"] += 1
+            continue
+        seen.add(record)
+        kept.append(record + (1 if cents < 0 else 0,))
     report.kept_rows = len(kept)
     report.kept_refund_rows = sum(1 for row in kept if row[-1])
     report.kept_sales_rows = report.kept_rows - report.kept_refund_rows
@@ -131,7 +187,9 @@ def build_clean_db(source: Path, target: Path) -> CleaningReport:
             )
         ]
         rows, report = clean_rows(
-            src.execute("SELECT order_id, date, store_id, product_id, qty, amount, payment FROM sales")
+            src.execute("SELECT order_id, date, store_id, product_id, qty, amount, payment FROM sales"),
+            {r[0] for r in stores},
+            {r[0] for r in products},
         )
     finally:
         src.close()
