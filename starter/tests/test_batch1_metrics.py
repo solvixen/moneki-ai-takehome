@@ -62,7 +62,7 @@ def test_refund_counts_into_net(tools: DataTools):
     m = tools.query_metrics("2026-06-18", "2026-06-30")
     assert m["net_revenue"] == 120.00  # 50 + 30 + 60 - 20
     assert m["refund_amount"] == 20.00
-    assert m["qty"] == 4  # 2 + 3 - 1
+    assert m["qty"] == 5  # O1 两行 2+1，O2 3，退款 −1
     assert m["aov"] == 60.00
 
 

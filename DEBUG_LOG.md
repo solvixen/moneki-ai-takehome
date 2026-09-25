@@ -116,7 +116,7 @@
 | 假设 | `retriever.py:276` 那行 `hit.doc_id = ordered[len(hits)].doc_id` 是蓄意错位？ |
 | 验证 | 单跑合成测试：同文档多块被 per-doc 限额跳过后，ordered（全量排序）与 hits（跳块后命中）错位，第 2 条命中的 doc_id 被改成排序序列里另一位选手的文档；单块文档恰好对齐，缺陷隐蔽 |
 | 根因 | 蓄意写错的赋值行（前同事留的雷）；`hit` 本身的 doc_id/meta 本来就正确 |
-| 修复 | commit `（见 git log）`：删除该行与无用的 `ordered`，doc_id/meta 一律来自片段自身 |
+| 修复 | commit `2c72c4f`：删除该行与无用的 `ordered`，doc_id/meta 一律来自片段自身 |
 | 回归测试 | `test_hit_doc_id_matches_its_own_chunk`（加长合成文档使多块跳位可见；配合 B2 分词修复后由假绿转红，修复后绿） |
 
 ## 缺陷 11（B7）：conftest 类级永久 mock，毒杀整个测试会话
