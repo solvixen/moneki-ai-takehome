@@ -228,6 +228,46 @@ python eval/run_eval.py --base-url http://localhost:8000 --questions eval/public
 
 注意：改完代码必须重启服务再评测（服务加载的是启动时的代码）；评测必须在仓库根目录运行。
 
+## 架构图
+
+```mermaid
+flowchart TB
+    subgraph 接入层
+        A["FastAPI server.py\n/api/health · /api/metrics/* · /api/retrieve · /api/chat · /api/trace"]
+    end
+    subgraph 问答主链路
+        B["Service\n会话 · 追踪 · 降级选择"]
+        C["Planner 规划\n意图/时间窗/商品门店/安全拒绝"]
+        D{"llm_mode"}
+        E["规则引擎\nAnswerer + DocFacts + Hybrid\n（无 Key 降级，也做 live 的兜底）"]
+        F["LiveEngine\n多轮工具调用编排"]
+        G["LLMClient\nOpenAI 兼容 chat/completions\nDeepSeek flash"]
+    end
+    subgraph 数据与知识层
+        H[("清洗表 clean.db\nSQLite · KB-001 v3 口径")]
+        I[("BM25 索引 index.json\nbigram 分词 · 句界切块")]
+        J["DataTools 取数\n指标/支付/排行/对比/SQL"]
+        K["Retriever 检索\n别名扩展 · 版本惩罚 · 跨语言桥"]
+        L["DocFacts 取证\n挑句 · 摘句引用 · 表格渲染"]
+    end
+
+    A --> B --> C
+    B --> D
+    D -- mock --> E
+    D -- live --> F --> G
+    E --> J
+    E --> K --> L
+    F --> J
+    F --> K
+    C -. 计划 .-> E
+    C -. 计划 .-> F
+    J --- H
+    K --- I
+    L --- I
+```
+
+数据流两句话：**数字永远来自数据库**（DataTools 直接查清洗表，live 模式下模型通过工具调用取数、代码校验模型正文里的每个数字）；**说法永远来自知识库**（Retriever 召回 → DocFacts 挑句 → 摘句引用逐字可核对）。两层在 planner 判定的意图处汇合：纯数字题走 data，制度题走 doc，"为什么/达标"走 hybrid。
+
 ## 工程决策记录（口径与歧义的取舍）
 
 以下每条都是知识库口径手册（KB-001 v3）没有明说、或新旧版本冲突时的拍板。全部由规则驱动、不写死任何数字，隐藏数据集换掉后重建即可生效。
