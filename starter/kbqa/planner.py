@@ -87,6 +87,9 @@ class Planner:
             return plan
         if standalone != question:
             plan.notes.append("这是一句追问，已按上一轮补全为：%s" % standalone)
+            # 记住上一轮的话题类型：文档话题的追问不该被“多少”打回取数
+            # （“供应商后来赔了多少”接着停售话题问，答案在供应商邮件里）。
+            plan.slots["inherited_kind"] = inherited.get("kind")
 
         # 越界判断放在追问还原之后：“那 7 月呢”要先补成完整问题才判得准。
         head = E.head_clause(standalone)
@@ -250,10 +253,13 @@ class Planner:
 
         # 路由：问“多少/多久/几”的就是要数字，问“为什么/原因”的就是要说法。
         # 两边都走一遍太慢，没必要。
-        # 例外：price 意图（“牛肉poke 现在多少钱一份”）问的是当前售价，
+        # 例外一：price 意图（“牛肉poke 现在多少钱一份”）问的是当前售价，
         # 答案在调价文档里，不能因为句子里有“多少”就被打回去查销量——
         # 查出来的只会是“数据区间外”的 refusal。
-        if plan.kind != "price" and E.has_any(text, ("多少", "多久", "几")):
+        # 例外二：文档话题的追问（合成问题里同时带着上轮的“为什么”和
+        # 本轮的“多少”，关键词打架），追问应继承 doc 意图。
+        inherited_doc = plan.slots.get("inherited_kind") == "doc"
+        if plan.kind != "price" and not inherited_doc and E.has_any(text, ("多少", "多久", "几")):
             plan.intent = "data"
             if plan.kind in ("doc", "anomaly", "target"):
                 plan.kind = "summary"
