@@ -25,7 +25,8 @@ RETRIEVAL_SOFT_GATE = 12.0
 #: 问得太泛时的反问阈值：检索连一个像样的命中都没有。
 CLARIFY_SCORE = 8.0
 #: 拼给作答用的资料最长多少字，太长了没必要。
-MAX_CONTEXT_CHARS = 200
+#: 上限受契约 answer≤1200 约束；两条摘句引用（每条一句到两句）足够装下事实。
+MAX_CONTEXT_CHARS = 900
 
 
 class Answerer(HybridAnswers):
@@ -311,12 +312,11 @@ class Answerer(HybridAnswers):
     # -- 纯文档 -----------------------------------------------------------------
 
     def _context(self, result: SearchResult) -> str:
-        """把命中的那篇文档原样拼进来，答案就在里面，别漏了。"""
-        blocks: list[str] = []
-        for hit in result.hits[:1]:
-            for chunk in self.retriever.index.chunks_of(hit.doc_id):
-                blocks.append(chunk.text)
-        return ("\n".join(blocks) + "\n") if blocks else ""
+        """（已废弃）曾把命中文档全文拼进答案——单篇动辄几千字，压垮
+        answer≤1200 的契约上限，还让答案文本与引用脱节（文本来自 top-1
+        命中，引用来自候选句排序）。现保留空实现以防外部调用，
+        作答一律走 _doc_block 的摘句引用。"""
+        return ""
 
     def _should_refuse(self, plan: Plan, confidence: float, top_score: float) -> Optional[str]:
         """三个信号一起判断“知识库里到底有没有这件事”。"""
@@ -351,4 +351,4 @@ class Answerer(HybridAnswers):
                 answer_type="clarify",
                 notes=["检索最高分 %.1f，且问题里没有指标、时间或门店" % top_score],
             )
-        return Answer(answer=self._context(result) + body, answer_type="doc", citations=citations)
+        return Answer(answer=body, answer_type="doc", citations=citations)
