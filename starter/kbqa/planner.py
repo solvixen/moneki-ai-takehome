@@ -276,19 +276,30 @@ class Planner:
         else:
             plan.kind, plan.intent = "summary", "data"
 
-        # 路由：问“多少/多久/几”的就是要数字，问“为什么/原因”的就是要说法。
-        # 两边都走一遍太慢，没必要。
-        # 例外一：price 意图（“牛肉poke 现在多少钱一份”）问的是当前售价，
-        # 答案在调价文档里，不能因为句子里有“多少”就被打回去查销量——
-        # 查出来的只会是“数据区间外”的 refusal。
-        # 例外二：文档话题的追问（合成问题里同时带着上轮的“为什么”和
-        # 本轮的“多少”，关键词打架），追问应继承 doc 意图。
-        inherited_doc = plan.slots.get("inherited_kind") == "doc"
-        if plan.kind != "price" and not inherited_doc and E.has_any(text, ("多少", "多久", "几")):
+        # 路由：问“多少/多久/几”的多半是要数字，问“为什么/原因”的是要说法。
+        # 但这条规则只能当“兜底”，不能盖过前面已经判定的意图——它曾把
+        # “外卖订单多久内可以退款”（doc）、“现在多少钱一份”（price）、
+        # “达到目标了吗”（target）全部打回取数，营业时间/储值/投诉/618
+        # 活动题甚至因此答成“数据区间外”的拒绝。
+        # 三个豁免，各有依据：
+        #   price —— “多少钱一份”问的是调价文档里的现价，不是销量；
+        #   target —— 达标类问题必须数字 + 目标文档两样都给（hybrid）；
+        #   not may_query —— 句子里没有任何可查指标/支付/排名时，
+        #     “多少/多久/几”几乎总在问规定细节，保持 doc；
+        #   not asks_policy —— 问口径（“退款在净营业额里怎么算”）即使
+        #     带着指标词也该去文档，KB-001 §5.1 明文。
+        if (
+            may_query
+            and not asks_policy
+            and plan.kind not in ("price", "target")
+            and E.has_any(text, ("多少", "多久", "几"))
+        ):
             plan.intent = "data"
-            if plan.kind in ("doc", "anomaly", "target"):
+            if plan.kind in ("doc", "anomaly"):
                 plan.kind = "summary"
-        elif E.has_any(text, ("为什么", "原因", "怎么回事", "咋回事")):
+        # 异常归因（anomaly）要求数字 + 原因两样都有；曾因“为什么”三个字
+        # 被下面的 elif 整体改写成 doc，只给文档不给数字（H01/H06 的症状）。
+        elif E.has_any(text, ("为什么", "原因", "怎么回事", "咋回事")) and plan.kind != "anomaly":
             plan.intent, plan.kind = "doc", "doc"
 
         plan.slots["asks_why"] = bool(asks_why or abnormal)
