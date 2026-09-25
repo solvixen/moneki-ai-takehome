@@ -50,7 +50,9 @@ class DataTools:
             self._local.conn = None
 
     def _where(self, start: str, end: str, store_id=None, product_id=None) -> tuple[str, list]:
-        clause = ["date >= ?", "date < ?"]
+        # KB-001 §4：按日期/门店/商品筛选，区间两端都含（闭区间）。
+        # 旧实现 date < end 把右端点切掉，单日查询（start == end）恒为 0。
+        clause = ["date >= ?", "date <= ?"]
         params: list[Any] = [start, end]
         if store_id:
             clause.append("store_id = ?")
@@ -91,16 +93,24 @@ class DataTools:
     # -- 指标 -------------------------------------------------------------------
 
     def query_metrics(self, start: str, end: str, store_id=None, product_id=None) -> dict:
-        """营业额、退款、订单数、客单价、销量。客单价 = 营业额 ÷ 明细行数。"""
+        """营业额、退款、订单数、客单价、销量，全部按 KB-001 v3 §4：
+
+        - 净营业额 = 销售行金额 + 退款行金额（退款为负，相加即相减）。
+          旧实现把退款行整体排掉，与手册 v3 相悖（v2 行为）。
+        - 退款金额 = 退款行金额合计的绝对值。
+        - 有效订单数 = 销售行中不同 order_id 数，多行订单算 1 单，退款行不计单。
+          旧实现按明细行数计数，两行订单被算成两单。
+        - 销量 = 销售行 qty 合计 − 退款行 qty 合计。
+        - 客单价 = 净营业额 ÷ 有效订单数，四舍五入 2 位；无订单时为 null。
+        """
         where, params = self._where(start, end, store_id, product_id)
-        # 退款行不是营业，直接排掉，省得把营业额算少了。
         row = self.conn.execute(
             """
             SELECT COALESCE(SUM(amount_cents), 0),
-                   0,
-                   COUNT(*),
-                   COALESCE(SUM(qty), 0)
-            FROM sales_clean WHERE %s AND is_refund = 0
+                   COALESCE(SUM(CASE WHEN is_refund = 1 THEN -amount_cents ELSE 0 END), 0),
+                   COUNT(DISTINCT CASE WHEN is_refund = 0 THEN order_id END),
+                   COALESCE(SUM(CASE WHEN is_refund = 0 THEN qty ELSE -qty END), 0)
+            FROM sales_clean WHERE %s
             """
             % where,
             params,
@@ -113,7 +123,7 @@ class DataTools:
             "store_id": store_id,
             "product_id": product_id,
             "net_revenue": yuan(net_cents),
-            "refund_amount": yuan(-refund_cents),
+            "refund_amount": yuan(refund_cents),
             "orders": orders,
             "aov": aov,
             "qty": qty,
