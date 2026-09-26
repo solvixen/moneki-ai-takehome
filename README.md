@@ -228,6 +228,20 @@ python eval/run_eval.py --base-url http://localhost:8000 --questions eval/public
 
 注意：改完代码必须重启服务再评测（服务加载的是启动时的代码）；评测必须在仓库根目录运行。
 
+### 前端看板（Vue3 + Vite + ECharts）
+
+另开一个终端（需要 Node.js 18+）：
+
+```bash
+cd starter/web
+npm install
+npm run dev        # 看板起在 http://localhost:5173，/api 自动代理到 8000
+```
+
+三个页签：**经营看板**（日期/门店筛选、KPI 卡、营业额趋势、Top 10 商品、数据质量面板）、**AI 问答**（对话框，展示数据证据与文档引用）、**调试面板**（输入 trace_id 可视化检索片段、工具调用、每步耗时——问答页的"调试追踪"链接可自动带入）。
+
+看板依赖两个契约之外的只读端点（均为第一关看板服务）：`GET /api/metrics/top_products`、`GET /api/stores`。
+
 ## 架构图
 
 ```mermaid
