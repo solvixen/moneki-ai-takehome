@@ -228,6 +228,18 @@ python eval/run_eval.py --base-url http://localhost:8000 --questions eval/public
 
 注意：改完代码必须重启服务再评测（服务加载的是启动时的代码）；评测必须在仓库根目录运行。
 
+### 评测即回归
+
+一条命令跑公开题库 + 自命题题库，与钉死的基线逐类别对比，任何类别退步即失败（退出码 1）：
+
+```bash
+python eval/run_regression.py --base-url http://127.0.0.1:8000
+```
+
+- 基线钉在 `eval/regression_baseline.json`（公开 100/100 + 自命题 14/14，2026-09-26 满分状态）。有意变更行为后更新基线，并在 commit 里说明原因。
+- 自命题 8 题覆盖 8 个类别（`eval/self_questions.jsonl`），包括公开题库未覆盖的盲区：按具体日期（"2026 年 6 月 10 日"）选择当时有效的政策版本。
+- 同一回归已接进 GitHub Actions（`.github/workflows/regression.yml`）：每次 push / PR 自动装依赖、起服务（mock 模式）、双题库评测、对比基线。
+
 ### 前端看板（Vue3 + Vite + ECharts）
 
 另开一个终端（需要 Node.js 18+）：

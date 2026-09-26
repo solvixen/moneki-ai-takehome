@@ -1,0 +1,33 @@
+name: eval-regression
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装服务依赖
+        run: pip install -r starter/requirements.txt
+
+      - name: 启动服务（mock 模式，无需 LLM Key）
+        working-directory: starter
+        run: |
+          python -m kbqa.rebuild
+          nohup python -m uvicorn kbqa.server:app --host 127.0.0.1 --port 8000 &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8000/api/health >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8000/api/health
+
+      - name: 评测即回归（公开题库 + 自命题题库，对比钉死基线）
+        run: python eval/run_regression.py --base-url http://127.0.0.1:8000

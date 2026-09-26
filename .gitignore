@@ -24,3 +24,7 @@ preflight_report.md
 starter/web/node_modules/
 starter/web/dist/
 *.timestamp-*.mjs
+
+# 评测报告产物（正式证据在根目录 report.json/report.md；这些是回归运行产物）
+eval/self_report/
+eval/regression_report/

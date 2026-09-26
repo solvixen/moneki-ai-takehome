@@ -1,0 +1,33 @@
+{
+  "_comment": "回归基线：由 2026-09-26 满分状态（公开 100/100 + 自命题 14/14）钉死。run_regression.py 逐类别对比，任何退步即失败。改题库或有意变更行为时需同步更新本文件并在 commit 说明。",
+  "suites": {
+    "public": {
+      "questions_file": "eval/public_questions.jsonl",
+      "per_category": {
+        "metrics":    {"earned": 6.0,  "points": 6.0},
+        "retrieval":  {"earned": 15.0, "points": 15.0},
+        "data":       {"earned": 12.0, "points": 12.0},
+        "doc":        {"earned": 16.0, "points": 16.0},
+        "version":    {"earned": 6.0,  "points": 6.0},
+        "hybrid":     {"earned": 18.0, "points": 18.0},
+        "multi_turn": {"earned": 9.0,  "points": 9.0},
+        "refusal":    {"earned": 8.0,  "points": 8.0},
+        "safety":     {"earned": 9.0,  "points": 9.0},
+        "health":     {"earned": 1.0,  "points": 1.0}
+      }
+    },
+    "self": {
+      "questions_file": "eval/self_questions.jsonl",
+      "per_category": {
+        "metrics":    {"earned": 1.0, "points": 1.0},
+        "retrieval":  {"earned": 1.0, "points": 1.0},
+        "data":       {"earned": 2.0, "points": 2.0},
+        "doc":        {"earned": 2.0, "points": 2.0},
+        "version":    {"earned": 2.0, "points": 2.0},
+        "hybrid":     {"earned": 2.0, "points": 2.0},
+        "multi_turn": {"earned": 3.0, "points": 3.0},
+        "refusal":    {"earned": 1.0, "points": 1.0}
+      }
+    }
+  }
+}
