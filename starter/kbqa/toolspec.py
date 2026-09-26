@@ -39,7 +39,7 @@ TOOLS = [
     ),
     _fn(
         "top_products",
-        "区间内卖得最好的商品排行。",
+        "区间内卖得最好的商品排行，只用于排行类问题；查某个具体商品的经营数字请改用 query_metrics 并带上 product_id。limit 最多 20。",
         {
             "start": _DATE,
             "end": _DATE,

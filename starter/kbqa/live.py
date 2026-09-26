@@ -13,7 +13,7 @@ from .llm import LLMClient, LLMError
 from .planner import Plan
 from .toolspec import TOOLS
 
-MAX_TOOL_ROUNDS = 4
+MAX_TOOL_ROUNDS = 6
 MAX_BAD_ARGS = 2
 _DOC_MARK = re.compile(r"[\[【]\s*(KB-\d+)\s*[\]】]")
 _NUMBER = re.compile(r"-?\d+(?:,\d{3})*(?:\.\d+)?")
