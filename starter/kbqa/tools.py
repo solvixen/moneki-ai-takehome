@@ -220,7 +220,7 @@ class DataTools:
             }
             for r in rows
         ]
-        return {"start": start, "end": end, "store_id": store_id, "products": items[: max(1, min(int(limit), 20))]}
+        return {"start": start, "end": end, "store_id": store_id, "products": items[: max(1, min(int(limit), 10))]}
 
     def by_store(self, start: str, end: str, product_id=None) -> dict:
         stores = []
