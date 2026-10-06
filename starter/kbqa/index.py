@@ -12,7 +12,7 @@ from typing import Optional
 
 from .aliases import AliasTable, build_alias_table
 from .chunker import CHUNKER_VERSION, Chunk, chunk_documents
-from .loader import Document, load_knowledge_base
+from .loader import SUPPORTED_SUFFIXES, Document, load_knowledge_base
 from .tokenizer import TOKENIZER_VERSION, tokenize
 
 INDEX_VERSION = "bm25-4"
@@ -20,10 +20,38 @@ K1 = 1.5
 B = 0.75
 
 
+def knowledge_fingerprint(kb_dir: Path) -> str:
+    """知识库内容指纹：每个文档的「相对路径 + 内容哈希」，按路径排序后串起来。
+
+    只看文件字节，不解析内容——文件增、删、改名、改一个字，指纹都会变。
+    """
+    digest = hashlib.sha256()
+    if not kb_dir.exists():
+        digest.update(b"<missing>")
+        return digest.hexdigest()
+    for path in sorted(kb_dir.rglob("*")):
+        if not path.is_file() or path.name.startswith("."):
+            continue
+        if path.suffix.lower() not in SUPPORTED_SUFFIXES:
+            continue
+        digest.update(path.relative_to(kb_dir).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).hexdigest().encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def content_key(kb_dir: Path) -> str:
-    """缓存键：三个版本号拼起来哈希一下。改了切块或分词，键就变，缓存自动失效。"""
+    """缓存键 = 三个版本号 + 知识库内容指纹。
+
+    版本号负责「解析逻辑变了」（改分词/切块/索引结构），内容指纹负责
+    「知识库变了」（换一份库、加文档、改正文）。两者缺一不可：只哈希
+    版本号的话，换任何一份知识库算出来的键都完全相同，缓存会被原样复用，
+    新文档永远进不了索引。
+    """
     digest = hashlib.sha256()
     digest.update(("%s|%s|%s\n" % (INDEX_VERSION, CHUNKER_VERSION, TOKENIZER_VERSION)).encode())
+    digest.update(knowledge_fingerprint(kb_dir).encode("ascii"))
     return digest.hexdigest()
 
 

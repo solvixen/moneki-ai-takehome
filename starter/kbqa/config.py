@@ -47,7 +47,8 @@ class Settings:
 
     @property
     def index_path(self) -> Path:
-        # 索引缓存跟着仓库走，clone 下来就能直接起服务，不用等建索引。
+        # 索引缓存放仓库的 .cache/ 下，不进版本库：文件本身可再生，
+        # 且缓存键含知识库内容指纹，知识库一变就自动重建。
         return PROJECT_DIR / ".cache" / "index.json"
 
     @property

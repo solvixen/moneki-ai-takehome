@@ -1,5 +1,7 @@
 .venv/
 var/
+# 检索索引缓存：可再生，且缓存键含知识库内容指纹，不进版本库
+.cache/
 __pycache__/
 *.pyc
 .pytest_cache/

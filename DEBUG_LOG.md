@@ -274,3 +274,22 @@
 - 公开题库（mock 模式）：**100.00 / 100.00，全部 10 类满分**（hybrid 18/18、doc 16/16、retrieval 15/15、data 12/12、multi_turn 9/9、safety 9/9、refusal 8/8、metrics 6/6、version 6/6、health 1/1）。
 - 基线复现：worktree 检出 `5ee86ed` 原始 starter 实测 **17/100**（baseline_report/report.json 入库作证）；此前 commit message 声称的 baseline_eval.txt 实际从未提交——评测证据必须真跑真存。
 - preflight 14/14、live 冒烟（真实 DeepSeek）通过；必交文件齐备：README（含架构图）/DEBUG_LOG/EVAL_REPORT/LLM_SETUP/AI_USAGE/DEMO。
+
+## 缺陷 23（G）：交付版自查——索引缓存不跟随知识库内容（活雷）
+
+前 22 条是 starter 自带的缺陷。这一条不同：它是交付版里自查出来的**活雷**——正常使用永远不暴露，只在特定动作下炸，而那个动作恰好就是评审的验收集。
+
+| 六栏 | 内容 |
+|---|---|
+| 现象 | 把 `KB_DIR` 指向另一份知识库后执行重建，索引仍是旧库：新增文档搜不到、同编号文档的正文还是旧的。单库本地自测 100% 复现不出来。 |
+| 定位 | ① `index.py` 的 `content_key()` 只哈希 `INDEX_VERSION\|CHUNKER_VERSION\|TOKENIZER_VERSION`，`kb_dir` 参数收了完全没用 → 任意知识库都算出同一个键（实测全等 `ecf724fce9fe`）；② `load_index(..., rebuild=False)` 命中该键就原样复用；③ `rebuild.py` 传的也是默认 `rebuild=False`，命令叫 rebuild 却不重建；④ `starter/.cache/index.json` 被 git 跟踪，clone 下来就已存在。 |
+| 修复 | ① `content_key()` 纳入知识库内容指纹：新增 `knowledge_fingerprint()`，对每个受支持文件按「相对路径 + 内容哈希」求指纹（增删改文件都会变，只改 mtime 不会）；② `rebuild.py` 显式 `rebuild=True`，命令语义与实现一致；③ `.cache/index.json` 从版本库移除并写进 `starter/.gitignore`（它可再生，本就不该被跟踪）；④ README 决策 14/23 与选型表述改成与实现一致——原文承诺“索引跟着知识库变”，旧实现做不到。 |
+| 回归测试 | 新增 `test_batch7_index_cache.py` 9 例：换库 / 加文档 / 改文档 / 删文档后索引必须跟着变，只改 mtime 不重建，知识库目录不存在不抛异常，`rebuild=True` 强制重算。修复前这批用例必红（已用旧实现反向验证）。 |
+| 经验 | 这是**验证的结构性盲区**：全部自测都在自家知识库上做，而改代码时版本号会一起 bump、缓存恰好失效，把问题盖住了。唯一能暴露它的是“只换内容、不动代码”这条路径——而它正是评审第 3 步。红测试事先写不出来（不知道有这条路存在），只能靠“把评审的动作自己先走一遍”来发现。另一个佐证：仓库里被跟踪的那份缓存本身就是陈旧的（137 块），而当前代码对同一份知识库产出 134 块——说明它生成时的代码 ≠ 交付时的代码，却仍能被旧键命中，这本身就是活雷的直接证据。 |
+
+## 验证结果（批次 7 / 活雷修复）
+
+- `pytest tests`：**91 passed**（新增 9 例）。
+- 公开题库（mock 模式）：**100.00 / 100.00**，与修复前一致——本次只改缓存失效判定，不动作答逻辑。
+- 反向验证（证明测试有牙）：把 `content_key()` 退回旧实现重放“换库”场景——换库后读到 `['KB-901']`、正文仍是旧库内容（新库的第二篇完全丢失）；修复后读到 `['KB-901','KB-902']`、正文是新库的。
+- 端到端：删掉本地缓存重跑 `make rebuild` → 35 篇 / 134 块 / 键 `56155d8e4c9f`（旧键 `ecf724fce9fe` 已不再产生）；服务启动自愈，`/api/health` 200。
