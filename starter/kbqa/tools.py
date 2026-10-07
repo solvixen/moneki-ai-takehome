@@ -80,6 +80,20 @@ class DataTools:
         self.conn.commit()
         return {"sql": sql, "rows": rows[:50], "row_count": len(rows)}
 
+    def schema_hint(self) -> str:
+        """当前库里真实存在的表与字段，供模型在 SQL 出错时自纠。
+
+        运行时从 sqlite_master 读，不写死表名——数据换了照样跟着走。
+        """
+        parts = []
+        for (table,) in self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        ):
+            cols = [r[1] for r in self.conn.execute("PRAGMA table_info(%s)" % table)]
+            parts.append("%s(%s)" % (table, ", ".join(cols)))
+        return "；".join(parts)
+
+
     def stores(self) -> list[dict]:
         return [dict(r) for r in self.conn.execute("SELECT * FROM stores ORDER BY store_id")]
 

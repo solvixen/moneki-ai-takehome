@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 import time
 from typing import Any, Optional
 
@@ -127,8 +128,11 @@ class Service:
             if name == "search_kb":
                 return self.retrieve(cleaned["query"], cleaned.get("top_k", 5))
             return getattr(self.tools, name)(**cleaned)
-        except (TypeError, ValueError) as exc:
-            return {"error": "工具 %s 执行失败：%s" % (name, exc)}
+        except (TypeError, ValueError, sqlite3.Error) as exc:
+            hint = ""
+            if isinstance(exc, sqlite3.Error):
+                hint = "。当前库中可用的表：" + self.tools.schema_hint()
+            return {"error": "工具 %s 执行失败：%s%s" % (name, exc, hint)}
 
     # -- 问答 -------------------------------------------------------------------
 
