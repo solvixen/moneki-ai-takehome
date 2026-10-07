@@ -318,3 +318,26 @@
 - 修复后：该文件 **3 passed**；全量 `pytest tests` = **94 passed**（91 + 3）。
 - 公开题库（mock 模式）：**100.00 / 100.00**，与修复前一致——本次只动错误分支的记录，不动作答逻辑。
 - 端到端：mock 服务 `/api/health` 200（35 篇 / 134 块 / 键 `56155d8e4c9f`）。
+
+## 缺陷 25（H）：模型自写 raw SQL 猜错表名崩库，整题变 refusal（live 波动源）
+
+前四条（17–20）是"分数低"，21–24 是"自查出的活雷"，这一条不一样：**它解释了为什么 live 分数一直在抖**。同一份代码、同一份数据、同一套题，连跑四次得到 92 / 92 / 85.5 / 91——**分数不是能力，是抽签**。定位它的钥匙，恰好是刚修好的缺陷 24：修之前这批 refusal 的 trace 全干净、外观就是"这题本来就不会"；修之后 `errors[].where="service"` 一栏直接指出了凶手。
+
+| 项 | 内容 |
+|---|---|
+| 现象 | live 全量四次得分 92 / 92 / 85.5 / 91，失分题集合每次都不同；某些题（D06 / H03 / H06 / T03 第 2 轮）在 refusal 与满分之间随机切换，而 mock 下同一题恒为满分。trace 的 `errors[]` 里反复出现 `sqlite3.OperationalError: no such table: <表名>`。 |
+| 假设 | ①是超时吗？（历史上 D06/T03 曾被记为"超时未答"）②是 LLM 侧失败吗？③是检索没召回吗？④会不会是工具层抛异常？ |
+| 验证 | ① **排除超时**：出事回合耗时 1.7s / 4.2s，全卷最慢的 T02 也只 20.4s，远未触到 `chat_budget=150s`，0 次超时；② **排除 LLM 失败**：`errors[].where` 全是 `service` 而非 `llm`，且无 `answer_live_failed` step；③ **排除检索**：这些题的 `retrieved` 不为空、有料；④ **命中工具层**：异常文本恒为 `no such table: …`，堆栈恒为 `live.py:96 run_tool → service.py:129 getattr → tools.py:78 conn.execute(sql)`。实测真表名只 4 个（`stores` / `products` / `sales_clean` / `meta`）：`select count(*) from sales_clean` 返回 18290，而模型猜的 `sales` / `clean_sales` / `kb_documents` / `daily_metrics` / `kb_chunks` / `clean_daily` 等 8 个名字全部抛 `OperationalError`。 |
+| 根因 | 两处叠加：① `starter/kbqa/tools.py:78` 的 `conn.execute(sql)` 对表名猜错毫无保护，直接抛 `sqlite3.OperationalError`；② `starter/kbqa/service.py:130` 的 `except (TypeError, ValueError)` **不接 `sqlite3.Error`**，异常因此冒到 `service.py:173` 的最外层兜底 → 整题变 refusal。**同段代码对"参数错"本来就有正确设计**（`:114`/`:121` 返回 `{"error": ...}` 让模型看见错误自纠），唯独 SQL 错被漏在这个元组之外。另外 `toolspec.py` 里 `run_sql` 的描述**零处告知真实表名**，等于让模型闭卷猜表名。 |
+| 修复 | commit `f6f59ae`，三处：① 新增 `tools.DataTools.schema_hint()`——运行时从 `sqlite_master` 读表名、`PRAGMA table_info` 读字段，拼成「表(列, 列)」，**不写死任何表名**，评审换 `data/` 后照样跟着走；② `service.run_tool` 的 except 元组加入 `sqlite3.Error`，并在 `isinstance(exc, sqlite3.Error)` 时把 `schema_hint()` 拼进 error 文本，让模型第一次猜错后能看见真实表名并自纠；③ `toolspec.py` 的 `run_sql` 描述改为**劝退式**：能用专用工具就必须用（内含 KB-001 口径），自己写 SQL 极易算错。 |
+| 回归测试 | `tests/test_batch9_run_sql_error.py` 3 例：① 猜错表名必须返回 `error` 而不抛异常（**修复前必红**）；② error 文本必须含真实表名 `sales_clean`（**修复前必红**，因为原生 `OperationalError` 文本里没有它）；③ 正确 SQL 守卫（`row_count == 1`，保证改动没把好路弄坏）。修复前实测 **2 failed / 1 passed**，两条红的异常在 assert 之前就抛出，证明这条路"根本没有返回值"——与现场 refusal 回合形态一致。 |
+
+**为什么修法不是"把表名写进工具描述"**（推导过程值得记录）：第一直觉是"缺表名就给表名"。但这条路有两个问题：① 表名是代码定的（`cleaning.py` 的 `_SCHEMA` 写死），把名字静态写进描述等于**把实现钉死**，评审第 3 步换 `data/` 虽仍跑同份 schema，但这个写法本身与"不写死任何内容"的红线相抵触，且会**诱导**模型更放心地去用 `run_sql`；② 更关键的是，raw SQL 真正的危险**不是崩库而是静默算错**——实测 M01：专用工具给净营业额 156757（等于金标），模型自写 SQL 给 157710，**差 953**（漏了退款行口径），而这两种答案的扣分是一样的。所以方向反了：**不该让 `run_sql` 更好用，该让模型少用它。** 最终定稿＝劝退式描述（减少使用）＋ 错误回带真实表名（用错了也能自纠），二者是一个整体。
+
+## 验证结果（批次 9 / live 波动源修复）
+
+- 红测证据：修复前 `pytest tests/test_batch9_run_sql_error.py` = **2 failed, 1 passed**（红的两条均为 `sqlite3.OperationalError`，断言前抛出；存档见 `output/缺陷25-红测证据-20261008.md`）。
+- 修复后：该文件 **3 passed**；全量 `pytest tests` = **97 passed**（94 + 3）。
+- 公开题库（mock 模式）：**100.00 / 100.00**，与修复前一致——本次改动只在 SQL 出错路径与工具描述上，不动作答逻辑。
+- 端到端（deepseek-flash，重启服务后全量公开题库）：**96.00 / 100.00**。直接验证效果：**H06 由 4/4 稳定失分转为满分**；此前 flaky 的 D06 / H02 / H03 / T03 / V01 **全部转绿**；整份报告 `no such table` 出现 **0 次**；失分集合由 5~6 项收敛至 **2 项**（H04 证据数字超限 61>60、T02 检索侧召回缺块）。此前 85.5 那种塌方从机制上不再可能——分数从此钉在一个窄区间里。
+
