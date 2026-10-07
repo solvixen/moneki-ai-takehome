@@ -296,3 +296,25 @@
 - 公开题库（mock 模式）：**100.00 / 100.00**，与修复前一致——本次只改缓存失效判定，不动作答逻辑。
 - 反向验证（证明测试有牙）：把 `content_key()` 退回旧实现重放“换库”场景——换库后读到 `['KB-901']`、正文仍是旧库内容（新库的第二篇完全丢失）；修复后读到 `['KB-901','KB-902']`、正文是新库的。
 - 端到端：删掉本地缓存重跑 `make rebuild` → 35 篇 / 134 块 / 键 `56155d8e4c9f`（旧键 `ecf724fce9fe` 已不再产生）；服务启动自愈，`/api/health` 200。
+
+## 缺陷 24（G）：交付版自查——非 LLM 异常被裸 except 吞掉，trace 不留痕（活雷）
+
+和缺陷 23 同类，也是交付版里自查出来的**活雷**，但危害方向相反：23 是静默算错，24 是**让排查工具撒谎**。正常使用永不触发，只在"真出 bug"的那一刻触发——而那正是最需要 trace 的时候。
+
+| 项 | 内容 |
+|---|---|
+| 现象 | planner / 检索层 / 作答层任一处抛出非 `LLMError` 的异常时，接口固定返回"抱歉，我暂时无法回答。"（`answer_type=refusal`），而 trace 里 `errors[]` 为空、`llm_calls` 为空、`steps` 只有 `plan → response` —— **外观和"这题本来就不会"完全一样**。 |
+| 假设 | ① 看到 refusal 就是 LLM 挂了？② 会不会有别的分支也产 refusal 却不写 trace？③ 兜底分支是不是故意不记录？ |
+| 验证 | ① 先按"有痕迹"排查：`service.py:204` 的 `except LLMError` 确实写了 trace（`errors[].where="llm"` + `answer_live_failed` step），所以 **LLM 失败是有痕迹的**；② 用 `monkeypatch` 把 `answerer.answer` 换成抛 `RuntimeError`，直接调 `Service.chat()`：返回 refusal 而 `trace["errors"] == []`（红测断言失败）；③ 读码确认 `service.py:173` 的 `except Exception` 只 return 不记录 → 假设②成立，①③排除。 |
+| 根因 | `starter/kbqa/service.py:173` 的 `except Exception:` 只做兜底返回，既不调 `trace.error` 也不记 step。其他异常出口都有痕迹（LLM 失败走 `:204`；工具参数错在 `:130` 被转成 `{"error": ...}` 不抛出），唯独最外层这一层是黑的。 |
+| 修复 | commit `23c6841`：补一行 `trace.error("service", exc)`。兜底行为、答案文本、`answer_type` 全部不变，只把真实异常（类型 + 消息 + 堆栈）写进 `trace.errors`，`where` 标为 `"service"` 以便与 `"llm"` 区分。 |
+| 回归测试 | `tests/test_batch8_service_error_trace.py` 3 例：① 非 LLM 异常必须进 `trace.errors` 且 `where="service"`（**修复前必红，已实证：`AssertionError: assert []`**）；② 兜底不许拆——仍返回 refusal、不把异常抛给调用方；③ LLM 失败路径仍是 `where="llm"` + `answer_live_failed` step（防止顺手改坏）。 |
+
+**为什么自测发现不了**：它只在"真出 bug"时触发，而所有已知用例都不制造非 LLM 异常——正常跑 mock 100/100、live 92/100 全都拿得到，风平浪静。它的代价不是分数，而是**排查工具的可信度**：现场若踩到它，trace 干净得像"这题本来就不会"，会把定位引向检索层/数据层，而真凶在 `service.py` 一行 except 里。这正是"trace 干净 ≠ 没问题"那条反直觉的代码级来源。
+
+## 验证结果（批次 8 / 活雷②修复）
+
+- 红测证据：修复前 `pytest tests/test_batch8_service_error_trace.py` = **1 failed, 2 passed**（红的就是"必须留痕"那条，`AssertionError: assert []`）。
+- 修复后：该文件 **3 passed**；全量 `pytest tests` = **94 passed**（91 + 3）。
+- 公开题库（mock 模式）：**100.00 / 100.00**，与修复前一致——本次只动错误分支的记录，不动作答逻辑。
+- 端到端：mock 服务 `/api/health` 200（35 篇 / 134 块 / 键 `56155d8e4c9f`）。
