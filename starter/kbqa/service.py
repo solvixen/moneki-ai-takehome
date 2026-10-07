@@ -170,7 +170,10 @@ class Service:
                 },
             )
             return answer
-        except Exception:  # noqa: BLE001 - 不管里面出什么事，接口都得给个像样的回答
+        except Exception as exc:  # noqa: BLE001 - 不管里面出什么事，接口都得给个像样的回答
+            # 兜底也得留痕：不写 trace 的话，"真出了 bug"和"这题本来就不会"在外观上
+            # 完全一样（steps 只有 plan → response、errors 为空），现场排查必然走错层。
+            trace.error("service", exc)
             return Answer(
                 answer="抱歉，我暂时无法回答。",
                 answer_type="refusal",
