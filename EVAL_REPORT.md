@@ -1,7 +1,8 @@
 # EVAL_REPORT 评测报告
 
-> 评测对象：公开题库 `eval/public_questions.jsonl`（40 题 / 10 类 / 100 分）。
+> 评测对象：公开题库 `eval/public_questions.jsonl`（55 题 / 10 类 / 100 分）。
 > 两次得分均为 `eval/run_eval.py` 的真实输出，原始报告见 `baseline_report/report.json` 与 `report.json`。
+> 下文各节的分数与测试条数为**当时那一次运行的快照**（故保留原值）；交付后的进一步自查与最新验证见文末「交付后的自查与修复（追加）」节。
 
 ## 总分对比
 
@@ -122,3 +123,22 @@ python eval/run_eval.py --base-url http://localhost:8000 --questions eval/public
 | 4 | `db7cfee` 前序 作答层（D1-D5） | 72 → 90 |
 | 5 | `021603a` LLM 接入 + preflight 14/14 | 90 |
 | 6 | `f317e3b`/`db7cfee`/HEAD 切块句界 + 表头 + 跨语言 | **100** |
+| 7 | `5f4644f`/`23c6841`/`f6f59ae` 交付后自查：索引缓存 / 兜底留痕 / raw SQL 兜底 | **100**（mock）· **96**（flash live） |
+
+## 交付后的自查与修复（追加）
+
+交付（9/26）之后，针对「评审第 3 步：换掉 `data/` 与 `knowledge_base/` → 重建 → 跑隐藏题库」可能暴露的问题，又做了一轮自查，修掉 3 个 starter 级缺陷。三者遵守同一条纪律：**先写红测复现 → 再修 → 跑全量回归**；逐条的方法、根因、修复、回归证据见 `DEBUG_LOG.md` 缺陷 23–25。
+
+| 缺陷 | 现象 | 根因（文件:行） | 修复 commit |
+|---|---|---|---|
+| 23 索引缓存不跟随知识库 | 换库 / 增删改文档后仍命中旧索引 | 缓存键只含版本号、不含内容指纹；且 `rebuild.py` 误传 `rebuild=False` | `5f4644f`（文档 `a59ece2`） |
+| 24 兜底异常被吞、不写 trace | 非 LLM 异常 → refusal 且 trace 全干净，排查被引向错误的层 | `service.py:173` 裸 `except` 未记录异常 | `23c6841`（文档 `2a5b398`） |
+| 25 模型自写 raw SQL 猜错表名崩库 | 模型绕过专用工具写 SQL → `no such table: xxx` → 整题 refusal（4 次全量分数 92/92/85.5/91 波动的主因） | `tools.py:78` 的 `conn.execute` 无保护；`service.py:130` 的 `except (TypeError, ValueError)` 不接 `sqlite3.Error` | `f6f59ae`（文档 `12c6af6`） |
+
+**最新验证（2026-10-08，代码 = `12c6af6`）**
+
+- 全量单测 **97 passed**（交付时 82；自查增补 15 项：缺陷 23 九例、24 三例、25 三例）；
+- mock 公开题库 **100.00 / 100.00**，一分未退；
+- live（`deepseek-flash`）全量 **96.00 / 100.00**：H06 由长期稳定失分转为满分，`no such table` 全卷出现 **0 次**，失分集合由 5–6 项收敛至 2 项。
+
+三个缺陷都属于「mock 测不出、换库或接真模型才暴露」的类型，正是本报告末尾「已知限制」之外的**遗留项收口**。live 侧残余失分（H04 证据数字总量越上限、T02 第 3 轮跨语言召回）根因已定位到文件:行，修法方向一并记在 `DEBUG_LOG.md` 中，作为已知限制与后续优化项。
